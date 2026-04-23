@@ -1,0 +1,1 @@
+From now on, I would like you to make a new git repository for this project. I would like you to then make clean commit messages, save them locally and then push them to GitHub so that we always have a saved version of the project.
