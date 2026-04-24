@@ -63,6 +63,7 @@
 
     /* Bomb */
     .bomb-zone{display:flex;flex-direction:column;align-items:center;margin-bottom:16px;}
+    .alarm-row{display:flex;align-items:center;gap:16px;}
     .bomb-emoji{
       font-size:4.8rem;
       animation:sway .7s ease-in-out infinite;
@@ -72,6 +73,23 @@
     }
     .bomb-emoji.urgent{animation:sway .25s ease-in-out infinite;filter:drop-shadow(0 0 22px rgba(255,30,0,.9));}
     @keyframes sway{0%,100%{transform:rotate(-7deg);}50%{transform:rotate(7deg);}}
+
+    /* Alarm lights */
+    .alarm-light{
+      width:18px;height:18px;border-radius:50%;
+      background:#1a1a2e;border:2px solid #2a2a4a;
+      flex-shrink:0;
+      transition:background .15s,box-shadow .15s;
+    }
+    .alarm-light.active{
+      background:#f44336;border-color:#ff5252;
+      animation:alarm-blink .35s ease-in-out infinite;
+      box-shadow:0 0 10px rgba(244,67,54,.9),0 0 22px rgba(244,67,54,.5);
+    }
+    @keyframes alarm-blink{
+      0%,100%{opacity:1;transform:scale(1);}
+      50%{opacity:.1;transform:scale(.8);}
+    }
 
     .timer-wrap{width:220px;height:13px;background:#111;border-radius:7px;overflow:hidden;margin-top:10px;border:1px solid #2a2a3a;}
     .timer-fill{height:100%;border-radius:7px;background:linear-gradient(90deg,#4caf50,#ff9800 60%,#f44336);transition:width .5s linear;width:100%;}
@@ -238,7 +256,11 @@
   </div>
 
   <div class="bomb-zone">
-    <div class="bomb-emoji" id="bomb">💣</div>
+    <div class="alarm-row">
+      <div class="alarm-light" id="al-left"></div>
+      <div class="bomb-emoji" id="bomb">💣</div>
+      <div class="alarm-light" id="al-right"></div>
+    </div>
     <div class="timer-wrap"><div class="timer-fill" id="t-fill"></div></div>
     <div class="timer-text" id="t-text">30s</div>
   </div>
@@ -293,16 +315,133 @@
 // ─── State ──────────────────────────────────────────────────────────────────
 let state = {
   grade: 5,
-  pool: [],         // shuffled questions for this session
-  roundIdx: 0,      // 0-4
+  pool: [],
+  roundIdx: 0,
   score: 0,
-  history: [],      // {correct, word, oddWord}
+  history: [],
   timerMax: 30,
   timerLeft: 30,
   timerInterval: null,
-  order: [0,1,2,3], // display order of words
+  order: [0,1,2,3],
   answered: false,
 };
+
+// ─── Audio ───────────────────────────────────────────────────────────────────
+let audioCtx = null;
+
+function getAudio(){
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTick(urgent){
+  try{
+    const ctx = getAudio();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'square';
+    osc.frequency.value = urgent ? 1100 : 750;
+    const t = ctx.currentTime;
+    gain.gain.setValueAtTime(urgent ? 0.12 : 0.07, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+    osc.start(t);
+    osc.stop(t + 0.045);
+  }catch(e){}
+}
+
+function playBlast(){
+  try{
+    const ctx = getAudio();
+    const t = ctx.currentTime;
+
+    // Low thump — cartoon boom, not scary
+    const thump = ctx.createOscillator();
+    const thumpGain = ctx.createGain();
+    thump.connect(thumpGain);
+    thumpGain.connect(ctx.destination);
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(180, t);
+    thump.frequency.exponentialRampToValueAtTime(45, t + 0.35);
+    thumpGain.gain.setValueAtTime(0.65, t);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    thump.start(t);
+    thump.stop(t + 0.55);
+
+    // Mid crunch layer
+    const mid = ctx.createOscillator();
+    const midGain = ctx.createGain();
+    mid.connect(midGain);
+    midGain.connect(ctx.destination);
+    mid.type = 'sawtooth';
+    mid.frequency.setValueAtTime(320, t);
+    mid.frequency.exponentialRampToValueAtTime(80, t + 0.2);
+    midGain.gain.setValueAtTime(0.25, t);
+    midGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    mid.start(t);
+    mid.stop(t + 0.25);
+
+    // Short noise burst
+    const bufSize = Math.floor(ctx.sampleRate * 0.3);
+    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for(let i=0;i<bufSize;i++) data[i]=(Math.random()*2-1)*Math.pow(1-i/bufSize,0.6);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const nGain = ctx.createGain();
+    noise.connect(nGain);
+    nGain.connect(ctx.destination);
+    nGain.gain.setValueAtTime(0.35, t);
+    nGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    noise.start(t);
+  }catch(e){}
+}
+
+function playCelebration(){
+  try{
+    const ctx = getAudio();
+    const t = ctx.currentTime;
+    // Bright ascending arpeggio — C5 E5 G5 C6
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((freq, i)=>{
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const st = t + i * 0.11;
+      gain.gain.setValueAtTime(0.0001, st);
+      gain.gain.linearRampToValueAtTime(0.22, st + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, st + 0.38);
+      osc.start(st);
+      osc.stop(st + 0.38);
+    });
+    // Shimmer on top — high fifth
+    const shimmer = ctx.createOscillator();
+    const sGain = ctx.createGain();
+    shimmer.connect(sGain);
+    sGain.connect(ctx.destination);
+    shimmer.type = 'sine';
+    shimmer.frequency.value = 1568; // G6
+    const st2 = t + 0.33;
+    sGain.gain.setValueAtTime(0.0001, st2);
+    sGain.gain.linearRampToValueAtTime(0.14, st2 + 0.03);
+    sGain.gain.exponentialRampToValueAtTime(0.0001, st2 + 0.45);
+    shimmer.start(st2);
+    shimmer.stop(st2 + 0.45);
+  }catch(e){}
+}
+
+// ─── Alarm lights ────────────────────────────────────────────────────────────
+function setAlarm(on){
+  ['al-left','al-right'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.classList.toggle('active', on);
+  });
+}
 
 // ─── Init grade buttons ──────────────────────────────────────────────────────
 (function initGradeGrid(){
@@ -333,7 +472,7 @@ function loadRound(){
   state.answered = false;
   const q = state.pool[state.roundIdx];
   const roundNum = state.roundIdx + 1;
-  const timerMax = 30 - state.roundIdx * 5;   // 30,25,20,15,10
+  const timerMax = 30 - state.roundIdx * 5;
   state.timerMax = timerMax;
   state.timerLeft = timerMax;
 
@@ -342,37 +481,42 @@ function loadRound(){
   document.getElementById('g-footer').textContent =
     `⚡ Timer: ${timerMax}s this round — tap before it explodes!`;
 
-  // shuffle word positions
   state.order = shuffle([0,1,2,3]);
   state.order.forEach((qIdx, pos)=>{
     const word = q.words[qIdx];
     const wEl = document.getElementById('w'+pos);
     wEl.textContent = word;
-    wEl.className = 'word' + (word.length>12?' xs':word.length>9?' sm':'');
+    wEl.className = 'word'+(word.length>12?' xs':word.length>9?' sm':'');
     const cEl = document.getElementById('c'+pos);
     cEl.className = 'crate';
     cEl.onclick = ()=>tap(pos, qIdx===q.odd);
   });
 
   document.getElementById('bomb').className='bomb-emoji';
+  setAlarm(false);
   updateTimer(timerMax, timerMax);
   clearInterval(state.timerInterval);
+  playTick(false);
   state.timerInterval = setInterval(tick, 1000);
 }
 
 function tick(){
   state.timerLeft--;
   updateTimer(state.timerLeft, state.timerMax);
-  const bomb = document.getElementById('bomb');
-  if(state.timerLeft<=5) bomb.className='bomb-emoji urgent';
-  if(state.timerLeft<=0){
+  const urgent = state.timerLeft <= 5;
+  playTick(urgent);
+  if(urgent){
+    document.getElementById('bomb').className='bomb-emoji urgent';
+    setAlarm(true);
+  }
+  if(state.timerLeft <= 0){
     clearInterval(state.timerInterval);
     if(!state.answered) triggerBoom(null);
   }
 }
 
 function updateTimer(left, max){
-  const pct = Math.max(0, (left/max)*100);
+  const pct = Math.max(0,(left/max)*100);
   document.getElementById('t-fill').style.width = pct+'%';
   const tEl = document.getElementById('t-text');
   tEl.textContent = left+'s';
@@ -384,16 +528,18 @@ function tap(pos, isOdd){
   if(state.answered) return;
   state.answered = true;
   clearInterval(state.timerInterval);
+  setAlarm(false);
   lockCrates();
 
   const q = state.pool[state.roundIdx];
   if(isOdd){
+    playCelebration();
     document.getElementById('c'+pos).classList.add('correct');
     state.score += 10;
     setTimeout(()=>showResult(true, q), 500);
   } else {
+    playBlast();
     document.getElementById('c'+pos).classList.add('wrong');
-    // mark all others wrong
     [0,1,2,3].forEach(p=>{
       if(p!==pos) setTimeout(()=>document.getElementById('c'+p).classList.add('wrong'),120);
     });
@@ -405,7 +551,10 @@ function tap(pos, isOdd){
 function triggerBoom(q){
   if(state.answered) return;
   state.answered = true;
+  clearInterval(state.timerInterval);
+  setAlarm(false);
   lockCrates();
+  playBlast();
   q = q || state.pool[state.roundIdx];
   [0,1,2,3].forEach(p=>document.getElementById('c'+p).classList.add('wrong'));
   spawnParticles();
@@ -491,6 +640,7 @@ function showScreen(id){
 }
 function goGrade(){
   clearInterval(state.timerInterval);
+  setAlarm(false);
   showScreen('s-grade');
 }
 function restartGrade(){ startGame(state.grade); }
