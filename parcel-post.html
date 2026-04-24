@@ -97,7 +97,7 @@
       background:repeating-linear-gradient(90deg,#7a5530 0,#7a5530 22px,#5a3a18 22px,#5a3a18 44px);
       animation:beltRoll .5s linear infinite;
     }
-    @keyframes beltRoll{from{background-position:0 0;}to{background-position:44px 0;}}
+    @keyframes beltRoll{from{background-position:44px 0;}to{background-position:0 0;}}
     .belt-surface{
       height:82px;background:linear-gradient(180deg,#8B6340,#7a5530);
       display:flex;align-items:center;justify-content:center;
@@ -120,8 +120,13 @@
       padding:5px 10px;position:relative;z-index:1;}
     .parcel-word{font-size:.86rem;font-weight:900;color:#3a2010;letter-spacing:.8px;}
 
-    @keyframes enterRight{from{transform:translateX(200px);opacity:0;}to{transform:translateX(0);opacity:1;}}
-    .parcel.entering{animation:enterRight .32s ease-out forwards;}
+    @keyframes beltTravel{
+      0%  {transform:translateX(280px);opacity:0;}
+      10% {opacity:1;}
+      90% {opacity:1;}
+      100%{transform:translateX(-280px);opacity:0;}
+    }
+    .parcel.traveling{animation:beltTravel 4s linear forwards;}
     .parcel.hidden{opacity:0;pointer-events:none;}
 
     /* Flying clone (created by JS) */
@@ -361,7 +366,7 @@ let st = {
   grade:5, rounds:[], roundIdx:0,
   queue:[], sorted:{syn:[],ant:[],nei:[]}, sealed:{syn:false,ant:false,nei:false},
   failed:new Set(), roundScore:0, totalScore:0, history:[],
-  timeLeft:ROUND_TIME, timerInterval:null, animating:false,
+  timeLeft:ROUND_TIME, timerInterval:null, animating:false, parcelTimeout:null,
 };
 
 // ─── Audio ───────────────────────────────────────────────────────────────────
@@ -447,6 +452,7 @@ function loadRound(){
   st.sealed={syn:false,ant:false,nei:false};
   st.failed=new Set();
   st.roundScore=0;st.animating=false;
+  clearTimeout(st.parcelTimeout);
 
   document.getElementById('g-round').textContent=`Round ${st.roundIdx+1} of 3`;
   document.getElementById('g-score').textContent=`${st.totalScore} pts`;
@@ -489,10 +495,22 @@ function showNextParcel(){
   const p=document.getElementById('parcel');
   document.getElementById('parcel-word').textContent=st.queue[0].word;
   p.style.opacity='';
-  p.className='parcel entering';
-  setTimeout(()=>{ if(p.classList.contains('entering')) p.className='parcel'; },340);
+  p.className='parcel';        // reset first
+  void p.offsetWidth;           // force reflow so animation restarts
+  p.className='parcel traveling';
   st.animating=false;
   updateQueueDots();
+  clearTimeout(st.parcelTimeout);
+  st.parcelTimeout=setTimeout(()=>{
+    if(st.animating||st.queue.length===0) return;
+    // parcel passed without a sort — send to back of queue, no score penalty
+    const item=st.queue.shift();
+    st.queue.push(item);
+    p.style.opacity='0';
+    p.className='parcel';
+    updateQueueDots();
+    setTimeout(showNextParcel,350);
+  },4000);
 }
 
 // ─── Flying parcel animation helpers ─────────────────────────────────────────
@@ -567,6 +585,7 @@ function flyWrong(type, word, cb){
 function tapBasket(type){
   if(st.animating||st.queue.length===0) return;
   if(st.sealed[type]){ setFeedback('✓ Already sealed!','ok'); return; }
+  clearTimeout(st.parcelTimeout);
   st.animating=true;
   lockBaskets(true);
 
@@ -720,7 +739,7 @@ function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 }
-function goGrade(){ clearInterval(st.timerInterval); showScreen('s-grade'); }
+function goGrade(){ clearInterval(st.timerInterval); clearTimeout(st.parcelTimeout); showScreen('s-grade'); }
 function playAgain(){ startGame(st.grade); }
 
 // ─── Shuffle ─────────────────────────────────────────────────────────────────
